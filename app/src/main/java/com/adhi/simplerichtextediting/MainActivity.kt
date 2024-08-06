@@ -73,6 +73,7 @@ fun RichTextEditor() {
     var currentFormatting by remember { mutableStateOf(setOf(FormattingType.HEADER1)) }
     var isFirstLine by remember { mutableStateOf(true) }
 
+
     Column(modifier = Modifier.padding(16.dp)) {
         BasicTextField(
             value = TextFieldValue(
@@ -90,40 +91,29 @@ fun RichTextEditor() {
                     val newRanges = currentFormatting.map { type ->
                         FormattingRange(oldLength, newValue.text.length, type)
                     }
-                    formattingRanges =
-                        updateFormattingRanges(formattingRanges, oldLength, addedLength) + newRanges
+                    formattingRanges = updateFormattingRanges(formattingRanges, oldLength, addedLength) + newRanges
 
-                    // Check if return was hit after a header
+                    // Check if return was hit
                     if (addedLength == 1 && newValue.text[oldLength] == '\n') {
-                        val headerType = formattingRanges.lastOrNull {
-                            it.end == oldLength && it.type in setOf(
-                                FormattingType.HEADER1,
-                                FormattingType.HEADER2,
-                                FormattingType.HEADER3
-                            )
-                        }?.type
-                        if (headerType != null) {
+                        if (isFirstLine) {
+                            isFirstLine = false
                             currentFormatting = setOf(FormattingType.BODY)
-                            formattingRanges = formattingRanges + FormattingRange(
-                                oldLength + 1,
-                                newValue.text.length,
-                                FormattingType.BODY
-                            )
+                        } else {
+                            val lastRange = formattingRanges.lastOrNull { it.end == oldLength }
+                            if (lastRange?.type in setOf(FormattingType.HEADER1, FormattingType.HEADER2, FormattingType.HEADER3)) {
+                                currentFormatting = setOf(FormattingType.BODY)
+                            }
                         }
+                        formattingRanges = formattingRanges + FormattingRange(oldLength + 1, newValue.text.length, FormattingType.BODY)
                     }
                 } else {
                     // Text was removed or replaced
-                    formattingRanges = updateFormattingRanges(
-                        formattingRanges,
-                        oldLength,
-                        newValue.text.length - oldLength
-                    )
+                    formattingRanges = updateFormattingRanges(formattingRanges, oldLength, newValue.text.length - oldLength)
                 }
-                if (isFirstLine && text.isNotEmpty()) {
-                    formattingRanges = formattingRanges.map {
-                        if (it.type == FormattingType.HEADER1 && it.start == 0) it.copy(end = text.indexOf('\n').let { if (it == -1) text.length else it })
-                        else it
-                    }
+
+                // Update current formatting based on selection
+                if (selection.start != selection.end) {
+                    currentFormatting = getCurrentFormatting(formattingRanges, selection)
                 }
             },
             modifier = Modifier
@@ -138,41 +128,44 @@ fun RichTextEditor() {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            FormatButton("Body", FormattingType.BODY, currentFormatting, selection) {
-                if (!isFirstLine) {
-                    currentFormatting = currentFormatting.filter { it in setOf(FormattingType.BOLD, FormattingType.ITALIC, FormattingType.UNDERLINE) }.toMutableSet().apply { add(FormattingType.BODY) }
+            FormatButton("Body", FormattingType.BODY, currentFormatting) {
+                if (selection.start != selection.end) {
                     formattingRanges = applyFormatting(FormattingType.BODY, formattingRanges, selection)
                 }
+                currentFormatting = setOf(FormattingType.BODY)
             }
-            FormatButton("B", FormattingType.BOLD, currentFormatting, selection) {
-                toggleInlineFormatting(FormattingType.BOLD, currentFormatting) { currentFormatting = it }
-                formattingRanges = applyFormatting(FormattingType.BOLD, formattingRanges, selection)
+            FormatButton("B", FormattingType.BOLD, currentFormatting) {
+                val result = toggleFormatting(FormattingType.BOLD, formattingRanges, selection, currentFormatting)
+                formattingRanges = result.first
+                currentFormatting = result.second
             }
-            FormatButton("I", FormattingType.ITALIC, currentFormatting, selection) {
-                toggleInlineFormatting(FormattingType.ITALIC, currentFormatting) { currentFormatting = it }
-                formattingRanges = applyFormatting(FormattingType.ITALIC, formattingRanges, selection)
+            FormatButton("I", FormattingType.ITALIC, currentFormatting) {
+                val result = toggleFormatting(FormattingType.ITALIC, formattingRanges, selection, currentFormatting)
+                formattingRanges = result.first
+                currentFormatting = result.second
             }
-            FormatButton("U", FormattingType.UNDERLINE, currentFormatting, selection) {
-                toggleInlineFormatting(FormattingType.UNDERLINE, currentFormatting) { currentFormatting = it }
-                formattingRanges = applyFormatting(FormattingType.UNDERLINE, formattingRanges, selection)
+            FormatButton("U", FormattingType.UNDERLINE, currentFormatting) {
+                val result = toggleFormatting(FormattingType.UNDERLINE, formattingRanges, selection, currentFormatting)
+                formattingRanges = result.first
+                currentFormatting = result.second
             }
-            FormatButton("H1", FormattingType.HEADER1, currentFormatting, selection) {
-                if (!isFirstLine) {
-                    currentFormatting = setOf(FormattingType.HEADER1)
+            FormatButton("H1", FormattingType.HEADER1, currentFormatting) {
+                if (selection.start != selection.end) {
                     formattingRanges = applyFormatting(FormattingType.HEADER1, formattingRanges, selection)
                 }
+                currentFormatting = setOf(FormattingType.HEADER1)
             }
-            FormatButton("H2", FormattingType.HEADER2, currentFormatting, selection) {
-                if (!isFirstLine) {
-                    currentFormatting = setOf(FormattingType.HEADER2)
+            FormatButton("H2", FormattingType.HEADER2, currentFormatting) {
+                if (selection.start != selection.end) {
                     formattingRanges = applyFormatting(FormattingType.HEADER2, formattingRanges, selection)
                 }
+                currentFormatting = setOf(FormattingType.HEADER2)
             }
-            FormatButton("H3", FormattingType.HEADER3, currentFormatting, selection) {
-                if (!isFirstLine) {
-                    currentFormatting = setOf(FormattingType.HEADER3)
+            FormatButton("H3", FormattingType.HEADER3, currentFormatting) {
+                if (selection.start != selection.end) {
                     formattingRanges = applyFormatting(FormattingType.HEADER3, formattingRanges, selection)
                 }
+                currentFormatting = setOf(FormattingType.HEADER3)
             }
         }
 
@@ -191,12 +184,12 @@ fun getStyleForFormatting(type: FormattingType): SpanStyle {
     }
 }
 
+
 @Composable
 fun FormatButton(
     text: String,
     formattingType: FormattingType,
     currentFormatting: Set<FormattingType>,
-    selection: TextRange,
     onFormatChange: () -> Unit
 ) {
     val isActive = currentFormatting.contains(formattingType)
@@ -204,7 +197,7 @@ fun FormatButton(
     Button(
         onClick = onFormatChange,
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isActive) Color.LightGray else Color.White
+            containerColor = if (isActive) Color.Yellow else Color.White
         )
     ) {
         Text(text)
@@ -286,28 +279,26 @@ fun applyFormatting(
 }
 
 
-fun toggleInlineFormatting(
+fun toggleFormatting(
     type: FormattingType,
-    currentFormatting: Set<FormattingType>,
-    onFormatChange: (Set<FormattingType>) -> Unit
-) {
-    val newFormatting = currentFormatting.toMutableSet()
-    if (newFormatting.contains(type)) {
-        newFormatting.remove(type)
+    ranges: List<FormattingRange>,
+    selection: TextRange,
+    currentFormatting: Set<FormattingType>
+): Pair<List<FormattingRange>, Set<FormattingType>> {
+    if (selection.start != selection.end) {
+        // Apply to selection
+        val newRanges = applyFormatting(type, ranges, selection)
+        return Pair(newRanges, getCurrentFormatting(newRanges, selection))
     } else {
-        newFormatting.add(type)
+        // Toggle for future typing
+        val newFormatting = currentFormatting.toMutableSet()
+        if (newFormatting.contains(type)) {
+            newFormatting.remove(type)
+        } else {
+            newFormatting.add(type)
+        }
+        return Pair(ranges, newFormatting)
     }
-    if (newFormatting.none {
-            it in setOf(
-                FormattingType.BODY,
-                FormattingType.HEADER1,
-                FormattingType.HEADER2,
-                FormattingType.HEADER3
-            )
-        }) {
-        newFormatting.add(FormattingType.BODY)
-    }
-    onFormatChange(newFormatting)
 }
 
 
@@ -334,5 +325,12 @@ fun buildSafeAnnotatedString(
             }
         }
     }
+}
+
+fun getCurrentFormatting(ranges: List<FormattingRange>, selection: TextRange): Set<FormattingType> {
+    return ranges.filter { it.start <= selection.start && it.end > selection.start }
+        .map { it.type }
+        .toSet()
+        .ifEmpty { setOf(FormattingType.BODY) }
 }
 
