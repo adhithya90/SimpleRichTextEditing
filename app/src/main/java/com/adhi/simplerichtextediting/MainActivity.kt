@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.adhi.simplerichtextediting.ui.theme.SimpleRichTextEditingTheme
+import kotlin.math.absoluteValue
 
 
 class MainActivity : ComponentActivity() {
@@ -108,7 +109,8 @@ fun RichTextEditor() {
                     }
                 } else {
                     // Text was removed or replaced
-                    formattingRanges = updateFormattingRanges(formattingRanges, oldLength, newValue.text.length - oldLength)
+                    val removedLength = oldLength - newValue.text.length
+                    formattingRanges = updateFormattingRanges(formattingRanges, selection.start, -removedLength)
                 }
 
                 // Update current formatting based on selection
@@ -210,20 +212,34 @@ fun updateFormattingRanges(
     changeIndex: Int,
     lengthDiff: Int
 ): List<FormattingRange> {
-    return oldRanges.mapNotNull { range ->
+    return oldRanges.flatMap { range ->
         when {
-            range.end <= changeIndex -> range
-            range.start >= changeIndex -> range.copy(
-                start = (range.start + lengthDiff).coerceAtLeast(0),
-                end = (range.end + lengthDiff).coerceAtLeast(0)
+            range.end <= changeIndex -> listOf(range)
+            range.start >= changeIndex -> listOf(
+                range.copy(
+                    start = (range.start + lengthDiff).coerceAtLeast(changeIndex),
+                    end = (range.end + lengthDiff).coerceAtLeast(changeIndex)
+                )
             )
-
-            else -> range.copy(
-                end = (range.end + lengthDiff).coerceAtLeast(range.start)
-            )
-        }.takeIf { it.start < it.end }
-    }
+            else -> {
+                val newRanges = mutableListOf<FormattingRange>()
+                if (range.start < changeIndex) {
+                    newRanges.add(range.copy(end = changeIndex))
+                }
+                if (range.end > changeIndex + lengthDiff.absoluteValue) {
+                    newRanges.add(
+                        range.copy(
+                            start = changeIndex,
+                            end = range.end + lengthDiff
+                        )
+                    )
+                }
+                newRanges
+            }
+        }
+    }.filter { it.start < it.end }
 }
+
 
 fun applyFormatting(
     type: FormattingType,
