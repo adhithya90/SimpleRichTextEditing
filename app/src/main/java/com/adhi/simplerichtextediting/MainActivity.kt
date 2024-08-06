@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -58,23 +59,25 @@ class MainActivity : ComponentActivity() {
 fun RichTextEditor() {
     var text by remember { mutableStateOf("") }
     var selection by remember { mutableStateOf(TextRange(0, 0)) }
-    var formattingRanges by remember { mutableStateOf(listOf<FormattingRange>()) }
-    var currentFormatting by remember { mutableStateOf(setOf(FormattingType.BODY)) }
-
+    var formattingRanges by remember {
+        mutableStateOf(
+            listOf<FormattingRange>(
+                FormattingRange(
+                    0,
+                    0,
+                    FormattingType.HEADER1
+                )
+            )
+        )
+    }
+    var currentFormatting by remember { mutableStateOf(setOf(FormattingType.HEADER1)) }
+    var isFirstLine by remember { mutableStateOf(true) }
 
     Column(modifier = Modifier.padding(16.dp)) {
         BasicTextField(
             value = TextFieldValue(
-                annotatedString = buildAnnotatedString {
-                    append(text)
-                    formattingRanges.forEach { formattingRange ->
-                        addStyle(
-                            getStyleForFormatting(formattingRange.type),
-                            formattingRange.start,
-                            formattingRange.end
-                        )
-                    }
-                }, selection = selection
+                annotatedString = buildSafeAnnotatedString(text, formattingRanges),
+                selection = selection
             ),
             onValueChange = { newValue ->
                 val oldLength = text.length
@@ -82,11 +85,45 @@ fun RichTextEditor() {
                 selection = newValue.selection
 
                 if (newValue.text.length > oldLength) {
+                    // Text was added
                     val addedLength = newValue.text.length - oldLength
-                    val newRange = FormattingRange(oldLength, newValue.text.length, currentFormatting.firstOrNull() ?: FormattingType.BODY)
-                    formattingRanges = updateFormattingRanges(formattingRanges, oldLength, addedLength) + newRange
+                    val newRanges = currentFormatting.map { type ->
+                        FormattingRange(oldLength, newValue.text.length, type)
+                    }
+                    formattingRanges =
+                        updateFormattingRanges(formattingRanges, oldLength, addedLength) + newRanges
+
+                    // Check if return was hit after a header
+                    if (addedLength == 1 && newValue.text[oldLength] == '\n') {
+                        val headerType = formattingRanges.lastOrNull {
+                            it.end == oldLength && it.type in setOf(
+                                FormattingType.HEADER1,
+                                FormattingType.HEADER2,
+                                FormattingType.HEADER3
+                            )
+                        }?.type
+                        if (headerType != null) {
+                            currentFormatting = setOf(FormattingType.BODY)
+                            formattingRanges = formattingRanges + FormattingRange(
+                                oldLength + 1,
+                                newValue.text.length,
+                                FormattingType.BODY
+                            )
+                        }
+                    }
                 } else {
-                    formattingRanges = updateFormattingRanges(formattingRanges, oldLength, newValue.text.length - oldLength)
+                    // Text was removed or replaced
+                    formattingRanges = updateFormattingRanges(
+                        formattingRanges,
+                        oldLength,
+                        newValue.text.length - oldLength
+                    )
+                }
+                if (isFirstLine && text.isNotEmpty()) {
+                    formattingRanges = formattingRanges.map {
+                        if (it.type == FormattingType.HEADER1 && it.start == 0) it.copy(end = text.indexOf('\n').let { if (it == -1) text.length else it })
+                        else it
+                    }
                 }
             },
             modifier = Modifier
@@ -102,34 +139,41 @@ fun RichTextEditor() {
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             FormatButton("Body", FormattingType.BODY, currentFormatting, selection) {
-                currentFormatting = setOf(FormattingType.BODY)
-                applyFormatting(FormattingType.BODY, formattingRanges, selection) { formattingRanges = it }
+                if (!isFirstLine) {
+                    currentFormatting = currentFormatting.filter { it in setOf(FormattingType.BOLD, FormattingType.ITALIC, FormattingType.UNDERLINE) }.toMutableSet().apply { add(FormattingType.BODY) }
+                    formattingRanges = applyFormatting(FormattingType.BODY, formattingRanges, selection)
+                }
             }
             FormatButton("B", FormattingType.BOLD, currentFormatting, selection) {
-                toggleFormatting(FormattingType.BOLD, currentFormatting) { currentFormatting = it }
-                applyFormatting(FormattingType.BOLD, formattingRanges, selection) { formattingRanges = it }
+                toggleInlineFormatting(FormattingType.BOLD, currentFormatting) { currentFormatting = it }
+                formattingRanges = applyFormatting(FormattingType.BOLD, formattingRanges, selection)
             }
             FormatButton("I", FormattingType.ITALIC, currentFormatting, selection) {
-                toggleFormatting(FormattingType.ITALIC, currentFormatting) { currentFormatting = it }
-                applyFormatting(FormattingType.ITALIC, formattingRanges, selection) { formattingRanges = it }
+                toggleInlineFormatting(FormattingType.ITALIC, currentFormatting) { currentFormatting = it }
+                formattingRanges = applyFormatting(FormattingType.ITALIC, formattingRanges, selection)
             }
             FormatButton("U", FormattingType.UNDERLINE, currentFormatting, selection) {
-                toggleFormatting(FormattingType.UNDERLINE, currentFormatting) { currentFormatting = it }
-                applyFormatting(FormattingType.UNDERLINE, formattingRanges, selection) { formattingRanges = it }
+                toggleInlineFormatting(FormattingType.UNDERLINE, currentFormatting) { currentFormatting = it }
+                formattingRanges = applyFormatting(FormattingType.UNDERLINE, formattingRanges, selection)
             }
             FormatButton("H1", FormattingType.HEADER1, currentFormatting, selection) {
-                currentFormatting = setOf(FormattingType.HEADER1)
-                applyFormatting(FormattingType.HEADER1, formattingRanges, selection) { formattingRanges = it }
+                if (!isFirstLine) {
+                    currentFormatting = setOf(FormattingType.HEADER1)
+                    formattingRanges = applyFormatting(FormattingType.HEADER1, formattingRanges, selection)
+                }
             }
             FormatButton("H2", FormattingType.HEADER2, currentFormatting, selection) {
-                currentFormatting = setOf(FormattingType.HEADER2)
-                applyFormatting(FormattingType.HEADER2, formattingRanges, selection) { formattingRanges = it }
+                if (!isFirstLine) {
+                    currentFormatting = setOf(FormattingType.HEADER2)
+                    formattingRanges = applyFormatting(FormattingType.HEADER2, formattingRanges, selection)
+                }
             }
             FormatButton("H3", FormattingType.HEADER3, currentFormatting, selection) {
-                currentFormatting = setOf(FormattingType.HEADER3)
-                applyFormatting(FormattingType.HEADER3, formattingRanges, selection) { formattingRanges = it }
+                if (!isFirstLine) {
+                    currentFormatting = setOf(FormattingType.HEADER3)
+                    formattingRanges = applyFormatting(FormattingType.HEADER3, formattingRanges, selection)
+                }
             }
-
         }
 
     }
@@ -173,47 +217,76 @@ fun updateFormattingRanges(
     changeIndex: Int,
     lengthDiff: Int
 ): List<FormattingRange> {
-    return oldRanges.map { range ->
+    return oldRanges.mapNotNull { range ->
         when {
             range.end <= changeIndex -> range
             range.start >= changeIndex -> range.copy(
                 start = (range.start + lengthDiff).coerceAtLeast(0),
                 end = (range.end + lengthDiff).coerceAtLeast(0)
             )
+
             else -> range.copy(
                 end = (range.end + lengthDiff).coerceAtLeast(range.start)
             )
-        }
-    }.filter { it.start < it.end }
+        }.takeIf { it.start < it.end }
+    }
 }
 
 fun applyFormatting(
     type: FormattingType,
     currentRanges: List<FormattingRange>,
-    selection: TextRange,
-    onRangesChange: (List<FormattingRange>) -> Unit
-) {
+    selection: TextRange
+): List<FormattingRange> {
     val newRanges = currentRanges.toMutableList()
-    val overlappingRanges = newRanges.filter { it.type == type && it.start <= selection.end && it.end >= selection.start }
 
-    if (overlappingRanges.isEmpty()) {
-        // Add new formatting
-        newRanges.add(FormattingRange(selection.start, selection.end, type))
-    } else {
-        // Remove formatting
-        newRanges.removeAll(overlappingRanges)
-        // Add formatting to non-overlapping parts if any
-        if (selection.start < overlappingRanges.first().start) {
-            newRanges.add(FormattingRange(selection.start, overlappingRanges.first().start, type))
+    when (type) {
+        FormattingType.BODY -> {
+            // Remove only header formatting
+            newRanges.removeAll {
+                it.type in setOf(
+                    FormattingType.HEADER1,
+                    FormattingType.HEADER2,
+                    FormattingType.HEADER3
+                ) && it.start < selection.end && it.end > selection.start
+            }
         }
-        if (selection.end > overlappingRanges.last().end) {
-            newRanges.add(FormattingRange(overlappingRanges.last().end, selection.end, type))
+
+        in setOf(FormattingType.HEADER1, FormattingType.HEADER2, FormattingType.HEADER3) -> {
+            // Remove existing header formatting and add new header
+            newRanges.removeAll {
+                it.type in setOf(
+                    FormattingType.HEADER1,
+                    FormattingType.HEADER2,
+                    FormattingType.HEADER3,
+                    FormattingType.BODY
+                ) && it.start < selection.end && it.end > selection.start
+            }
+            newRanges.add(FormattingRange(selection.start, selection.end, type))
+        }
+
+        else -> {
+            // Toggle inline formatting
+            val existingRange =
+                newRanges.find { it.type == type && it.start <= selection.start && it.end >= selection.end }
+            if (existingRange != null) {
+                newRanges.remove(existingRange)
+                if (existingRange.start < selection.start) {
+                    newRanges.add(FormattingRange(existingRange.start, selection.start, type))
+                }
+                if (existingRange.end > selection.end) {
+                    newRanges.add(FormattingRange(selection.end, existingRange.end, type))
+                }
+            } else {
+                newRanges.add(FormattingRange(selection.start, selection.end, type))
+            }
         }
     }
-    onRangesChange(newRanges)
+
+    return newRanges
 }
 
-fun toggleFormatting(
+
+fun toggleInlineFormatting(
     type: FormattingType,
     currentFormatting: Set<FormattingType>,
     onFormatChange: (Set<FormattingType>) -> Unit
@@ -221,12 +294,18 @@ fun toggleFormatting(
     val newFormatting = currentFormatting.toMutableSet()
     if (newFormatting.contains(type)) {
         newFormatting.remove(type)
-        if (newFormatting.isEmpty()) {
-            newFormatting.add(FormattingType.BODY)
-        }
     } else {
-        newFormatting.remove(FormattingType.BODY)
         newFormatting.add(type)
+    }
+    if (newFormatting.none {
+            it in setOf(
+                FormattingType.BODY,
+                FormattingType.HEADER1,
+                FormattingType.HEADER2,
+                FormattingType.HEADER3
+            )
+        }) {
+        newFormatting.add(FormattingType.BODY)
     }
     onFormatChange(newFormatting)
 }
@@ -236,5 +315,24 @@ data class FormattingRange(val start: Int, val end: Int, val type: FormattingTyp
 
 enum class FormattingType {
     BODY, BOLD, ITALIC, UNDERLINE, HEADER1, HEADER2, HEADER3
+}
+
+fun buildSafeAnnotatedString(
+    text: String,
+    formattingRanges: List<FormattingRange>
+): AnnotatedString {
+    return buildAnnotatedString {
+        append(text)
+        formattingRanges.forEach { range ->
+            try {
+                if (range.start < text.length && range.end <= text.length && range.start < range.end) {
+                    addStyle(getStyleForFormatting(range.type), range.start, range.end)
+                }
+            } catch (e: Exception) {
+                // Log the exception or handle it as needed
+                println("Error applying formatting: ${e.message}")
+            }
+        }
+    }
 }
 
