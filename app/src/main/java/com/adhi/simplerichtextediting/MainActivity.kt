@@ -304,31 +304,27 @@ fun updateFormattingRanges(
 ): List<FormattingRange> {
     return oldRanges.flatMap { range ->
         when {
-            range.end <= changeIndex -> listOf(range)
+            range.end <= changeIndex -> listOf(range)  // Range is before the change, keep it as is
             range.start >= changeIndex -> listOf(
                 range.copy(
                     start = (range.start + lengthDiff).coerceAtLeast(changeIndex),
                     end = (range.end + lengthDiff).coerceAtLeast(changeIndex)
                 )
-            )
-
+            )  // Range is after the change, shift it
             else -> {
-                val newRanges = mutableListOf<FormattingRange>()
-                if (range.start < changeIndex) {
-                    newRanges.add(range.copy(end = changeIndex))
-                }
-                if (range.end > changeIndex + lengthDiff.absoluteValue) {
-                    newRanges.add(
+                // Range overlaps with the change
+                listOfNotNull(
+                    range.copy(end = changeIndex),  // Keep the part before the change
+                    if (range.end > changeIndex + lengthDiff.absoluteValue)
                         range.copy(
-                            start = changeIndex,
+                            start = changeIndex + lengthDiff.coerceAtLeast(0),
                             end = range.end + lengthDiff
                         )
-                    )
-                }
-                newRanges
+                    else null  // Keep the part after the change, if it exists
+                )
             }
         }
-    }.filter { it.start < it.end }
+    }.filter { it.start < it.end }  // Remove any invalid ranges
 }
 
 
@@ -392,20 +388,54 @@ fun toggleFormatting(
     selection: TextRange,
     currentFormatting: Set<FormattingType>
 ): Pair<List<FormattingRange>, Set<FormattingType>> {
-    if (selection.start != selection.end) {
-        // Apply to selection
-        val newRanges = applyFormatting(type, ranges, selection)
-        return Pair(newRanges, getCurrentFormatting(newRanges, selection))
-    } else {
-        // Toggle for future typing
-        val newFormatting = currentFormatting.toMutableSet()
-        if (newFormatting.contains(type)) {
-            newFormatting.remove(type)
-        } else {
+    val blockFormats = setOf(FormattingType.BODY, FormattingType.HEADER1, FormattingType.HEADER2, FormattingType.HEADER3)
+    val inlineFormats = setOf(FormattingType.BOLD, FormattingType.ITALIC, FormattingType.UNDERLINE)
+
+    val newFormatting = currentFormatting.toMutableSet()
+    val newRanges = ranges.toMutableList()
+
+    when (type) {
+        FormattingType.BODY,
+        FormattingType.HEADER1,
+        FormattingType.HEADER2,
+        FormattingType.HEADER3 -> {
+            // Remove all block formats from current formatting
+            newFormatting.removeAll(blockFormats)
+            // Add the new block format
             newFormatting.add(type)
+
+            if (selection.start != selection.end) {
+                // Remove existing block formatting in the selection
+                newRanges.removeAll { it.type in blockFormats && it.start < selection.end && it.end > selection.start }
+                // Add new block formatting
+                newRanges.add(FormattingRange(selection.start, selection.end, type))
+            }
         }
-        return Pair(ranges, newFormatting)
+        FormattingType.BOLD,
+        FormattingType.ITALIC,
+        FormattingType.UNDERLINE -> {
+            if (newFormatting.contains(type)) {
+                newFormatting.remove(type)
+                if (selection.start != selection.end) {
+                    // Remove the inline formatting from the selection
+                    newRanges.removeAll { it.type == type && it.start < selection.end && it.end > selection.start }
+                }
+            } else {
+                newFormatting.add(type)
+                if (selection.start != selection.end) {
+                    // Add the inline formatting to the selection
+                    newRanges.add(FormattingRange(selection.start, selection.end, type))
+                }
+            }
+        }
     }
+
+    // Ensure there's always a block format
+    if (newFormatting.intersect(blockFormats).isEmpty()) {
+        newFormatting.add(FormattingType.BODY)
+    }
+
+    return Pair(newRanges, newFormatting)
 }
 
 
