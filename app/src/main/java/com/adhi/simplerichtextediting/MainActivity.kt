@@ -5,26 +5,41 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
@@ -32,10 +47,13 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.adhi.simplerichtextediting.ui.theme.SimpleRichTextEditingTheme
 import kotlin.math.absoluteValue
 
@@ -73,9 +91,28 @@ fun RichTextEditor() {
     }
     var currentFormatting by remember { mutableStateOf(setOf(FormattingType.HEADER1)) }
     var isFirstLine by remember { mutableStateOf(true) }
+    var showFormattingToolbar by remember { mutableStateOf(false) }
 
+    val view = LocalView.current
+    val density = LocalDensity.current
 
-    Column(modifier = Modifier.padding(16.dp)) {
+    var keyboardHeight by remember { mutableStateOf(0.dp) }
+    var isKeyboardVisible by remember { mutableStateOf(false) }
+
+    DisposableEffect(view) {
+        val listener = ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
+            val imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime())
+            val imeHeight = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            isKeyboardVisible = imeVisible
+            keyboardHeight = with(density) { imeHeight.toDp() }
+            insets
+        }
+        onDispose {
+            ViewCompat.setOnApplyWindowInsetsListener(view, null)
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
         BasicTextField(
             value = TextFieldValue(
                 annotatedString = buildSafeAnnotatedString(text, formattingRanges),
@@ -92,7 +129,8 @@ fun RichTextEditor() {
                     val newRanges = currentFormatting.map { type ->
                         FormattingRange(oldLength, newValue.text.length, type)
                     }
-                    formattingRanges = updateFormattingRanges(formattingRanges, oldLength, addedLength) + newRanges
+                    formattingRanges =
+                        updateFormattingRanges(formattingRanges, oldLength, addedLength) + newRanges
 
                     // Check if return was hit
                     if (addedLength == 1 && newValue.text[oldLength] == '\n') {
@@ -101,16 +139,26 @@ fun RichTextEditor() {
                             currentFormatting = setOf(FormattingType.BODY)
                         } else {
                             val lastRange = formattingRanges.lastOrNull { it.end == oldLength }
-                            if (lastRange?.type in setOf(FormattingType.HEADER1, FormattingType.HEADER2, FormattingType.HEADER3)) {
+                            if (lastRange?.type in setOf(
+                                    FormattingType.HEADER1,
+                                    FormattingType.HEADER2,
+                                    FormattingType.HEADER3
+                                )
+                            ) {
                                 currentFormatting = setOf(FormattingType.BODY)
                             }
                         }
-                        formattingRanges = formattingRanges + FormattingRange(oldLength + 1, newValue.text.length, FormattingType.BODY)
+                        formattingRanges = formattingRanges + FormattingRange(
+                            oldLength + 1,
+                            newValue.text.length,
+                            FormattingType.BODY
+                        )
                     }
                 } else {
                     // Text was removed or replaced
                     val removedLength = oldLength - newValue.text.length
-                    formattingRanges = updateFormattingRanges(formattingRanges, selection.start, -removedLength)
+                    formattingRanges =
+                        updateFormattingRanges(formattingRanges, selection.start, -removedLength)
                 }
 
                 // Update current formatting based on selection
@@ -120,57 +168,100 @@ fun RichTextEditor() {
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp),
-            textStyle = TextStyle(Color.White, fontWeight = FontWeight.Thin, fontSize = 25.sp)
+                .height(800.dp),
+            textStyle = TextStyle(Color.White, fontWeight = FontWeight.Thin, fontSize = 25.sp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+            keyboardActions = KeyboardActions(onDone = { showFormattingToolbar = false })
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        if (showFormattingToolbar) {
+            FormattingToolbar(
+                currentFormatting = currentFormatting,
+                onFormatChange = { type ->
+                    val result =
+                        toggleFormatting(type, formattingRanges, selection, currentFormatting)
+                    formattingRanges = result.first
+                    currentFormatting = result.second
+                },
+                onClose = { showFormattingToolbar = false },
+                modifier = Modifier
+                    .align(if (isKeyboardVisible) Alignment.BottomEnd else Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .offset(y = if (isKeyboardVisible) -keyboardHeight else 0.dp)
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
-        ) {
-            FormatButton("Body", FormattingType.BODY, currentFormatting) {
-                if (selection.start != selection.end) {
-                    formattingRanges = applyFormatting(FormattingType.BODY, formattingRanges, selection)
-                }
-                currentFormatting = setOf(FormattingType.BODY)
+            )
+        } else {
+            IconButton(
+                onClick = { showFormattingToolbar = true },
+                modifier = Modifier
+                    .align(if (isKeyboardVisible) Alignment.BottomEnd else Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .offset(y = if (isKeyboardVisible) -keyboardHeight else 0.dp)
+            ) {
+                Icon(
+                    Icons.Default.FormatSize,
+                    contentDescription = "Open formatting toolbar"
+                )
             }
-            FormatButton("B", FormattingType.BOLD, currentFormatting) {
-                val result = toggleFormatting(FormattingType.BOLD, formattingRanges, selection, currentFormatting)
-                formattingRanges = result.first
-                currentFormatting = result.second
-            }
-            FormatButton("I", FormattingType.ITALIC, currentFormatting) {
-                val result = toggleFormatting(FormattingType.ITALIC, formattingRanges, selection, currentFormatting)
-                formattingRanges = result.first
-                currentFormatting = result.second
-            }
-            FormatButton("U", FormattingType.UNDERLINE, currentFormatting) {
-                val result = toggleFormatting(FormattingType.UNDERLINE, formattingRanges, selection, currentFormatting)
-                formattingRanges = result.first
-                currentFormatting = result.second
-            }
-            FormatButton("H1", FormattingType.HEADER1, currentFormatting) {
-                if (selection.start != selection.end) {
-                    formattingRanges = applyFormatting(FormattingType.HEADER1, formattingRanges, selection)
-                }
-                currentFormatting = setOf(FormattingType.HEADER1)
-            }
-            FormatButton("H2", FormattingType.HEADER2, currentFormatting) {
-                if (selection.start != selection.end) {
-                    formattingRanges = applyFormatting(FormattingType.HEADER2, formattingRanges, selection)
-                }
-                currentFormatting = setOf(FormattingType.HEADER2)
-            }
-            FormatButton("H3", FormattingType.HEADER3, currentFormatting) {
-                if (selection.start != selection.end) {
-                    formattingRanges = applyFormatting(FormattingType.HEADER3, formattingRanges, selection)
-                }
-                currentFormatting = setOf(FormattingType.HEADER3)
-            }
+
         }
 
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+@Composable
+fun FormattingToolbar(
+    currentFormatting: Set<FormattingType>,
+    onFormatChange: (FormattingType) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = Color.DarkGray,
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Format", style = MaterialTheme.typography.titleMedium, color = Color.White)
+                IconButton(onClick = onClose) {
+                    Text(
+                        "×",
+                        color = Color.White,
+                        fontSize = MaterialTheme.typography.titleMedium.fontSize
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                FormatButton("Title", FormattingType.HEADER1, currentFormatting, onFormatChange)
+                FormatButton("Heading", FormattingType.HEADER2, currentFormatting, onFormatChange)
+                FormatButton(
+                    "Subheading",
+                    FormattingType.HEADER3,
+                    currentFormatting,
+                    onFormatChange
+                )
+                FormatButton("Body", FormattingType.BODY, currentFormatting, onFormatChange)
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Start
+            ) {
+                FormatButton("B", FormattingType.BOLD, currentFormatting, onFormatChange)
+                Spacer(modifier = Modifier.width(16.dp))
+                FormatButton("I", FormattingType.ITALIC, currentFormatting, onFormatChange)
+                Spacer(modifier = Modifier.width(16.dp))
+                FormatButton("U", FormattingType.UNDERLINE, currentFormatting, onFormatChange)
+            }
+        }
     }
 }
 
@@ -192,17 +283,16 @@ fun FormatButton(
     text: String,
     formattingType: FormattingType,
     currentFormatting: Set<FormattingType>,
-    onFormatChange: () -> Unit
+    onFormatChange: (FormattingType) -> Unit
 ) {
     val isActive = currentFormatting.contains(formattingType)
-
     Button(
-        onClick = onFormatChange,
+        onClick = { onFormatChange(formattingType) },
         colors = ButtonDefaults.buttonColors(
-            containerColor = if (isActive) Color.Yellow else Color.White
-        )
+            containerColor = if (isActive) Color.Yellow else Color.LightGray
+        ), modifier = Modifier.height(36.dp)
     ) {
-        Text(text)
+        Text(text, color = if (isActive) Color.Black else Color.White)
     }
 }
 
@@ -221,6 +311,7 @@ fun updateFormattingRanges(
                     end = (range.end + lengthDiff).coerceAtLeast(changeIndex)
                 )
             )
+
             else -> {
                 val newRanges = mutableListOf<FormattingRange>()
                 if (range.start < changeIndex) {
